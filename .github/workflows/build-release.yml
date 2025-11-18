@@ -1,0 +1,137 @@
+name: Build & Release
+
+permissions:
+  contents: write
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+        type: string
+
+jobs:
+  build-windows:
+    name: Build Windows x64 App
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          .venv\Scripts\activate
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Build app with PyInstaller
+        run: |
+          .venv\Scripts\pyinstaller ./tchMaterial-parser.spec
+          cd dist
+          mv tchMaterial-parser.exe tchMaterial-parser-windows-x64.exe
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/tchMaterial-parser-windows-x64.exe
+          tag_name: ${{ inputs.tag || github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-linux:
+    name: Build Linux x64 App
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Build app with PyInstaller
+        run: |
+          .venv/bin/pyinstaller ./tchMaterial-parser.spec
+          cd dist
+          mv tchMaterial-parser tchMaterial-parser-linux-x64
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/tchMaterial-parser-linux-x64
+          tag_name: ${{ inputs.tag || github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-linux-arm64:
+    name: Build Linux ARM64 App
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Build app with PyInstaller
+        run: |
+          .venv/bin/pyinstaller ./tchMaterial-parser.spec
+          cd dist
+          mv tchMaterial-parser tchMaterial-parser-linux-arm64
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/tchMaterial-parser-linux-arm64
+          tag_name: ${{ inputs.tag || github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-macos:
+    name: Build macOS ARM64 App
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Build app with PyInstaller
+        run: |
+          .venv/bin/pyinstaller ./tchMaterial-parser.spec
+      - name: Create zip archive
+        run: |
+          cd dist
+          mv tchMaterial-parser tchMaterial-parser-mac-arm64.app
+          zip -r tchMaterial-parser-mac-arm64.zip tchMaterial-parser-mac-arm64.app
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/tchMaterial-parser-mac-arm64.zip
+          tag_name: ${{ inputs.tag || github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
