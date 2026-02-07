@@ -851,9 +851,21 @@ if os_name == "Darwin":
     url_text.bind("<Control-Button-1>", show_context_menu)
     url_text.bind("<Button-2>", show_context_menu)
 
-options = [[resource_list[k]["display_name"] for k in resource_list], [], [], [], [], [], [], []] # 构建选择项
+options = [[resource_list[k]["display_name"] for k in resource_list], [], [], [], [], [], [], []] # 构建选择项（仅用于显示文本）
 
 variables = [tk.StringVar(root, "资源类型"), tk.StringVar(root, "分类 1"), tk.StringVar(root, "分类 2"), tk.StringVar(root, "分类 3"), tk.StringVar(root, "分类 4"), tk.StringVar(root, "分类 5"), tk.StringVar(root, "分类 6"), tk.StringVar(root, "分类 7")]
+# 记录每一级下拉框“当前真实选中的资源 ID”。
+# 之所以额外维护这份状态，是因为 display_name 可能重复（例如同名教材不同 contentId），
+# 只靠文本反查会命中第一个同名项，从而出现“两个选项生成同一链接”的问题。
+selected_option_ids: list[str | None] = [None] * 8
+
+def select_option(index: int, option_id: str, option_label: str) -> None:
+    # 用户点击菜单项时，同时写入：
+    # 1) UI 展示文本（variables）
+    # 2) 对应的唯一 ID（selected_option_ids）
+    # 后续任何层级推进、URL 生成都优先使用唯一 ID，避免同名歧义。
+    selected_option_ids[index] = option_id
+    variables[index].set(option_label)
 
 # 处理用户选择事件
 event_flag = False # 防止事件循环调用
@@ -867,7 +879,15 @@ def selection_handler(index: int, *args) -> None:
     end_flag = False # 是否到达最终目标
     for i in range(index + 1): # 获取当前层级
         try:
-            current_id = next(k for k, v in current_hier.items() if v["display_name"] == variables[i].get())
+            # 优先按“已记录的真实 ID”定位当前层级节点。
+            # 这是修复同名教材冲突的核心：同名文本不同 ID 时，仍能精确定位。
+            current_id = selected_option_ids[i]
+            if not current_id or current_id not in current_hier:
+                # 兜底逻辑：当某一级没有记录 ID（例如旧状态、异常状态）时，
+                # 才回退到按文本匹配；并把匹配结果回写到 selected_option_ids，
+                # 保证后续流程继续按 ID 工作。
+                current_id = next(k for k, v in current_hier.items() if v["display_name"] == variables[i].get())
+                selected_option_ids[i] = current_id
             current_hier = current_hier[current_id]["children"]
         except (StopIteration, KeyError): # 无法继续向下选择，说明已经到达最终目标
             end_flag = True
@@ -875,29 +895,46 @@ def selection_handler(index: int, *args) -> None:
 
     if index < len(drops) - 1 and not end_flag: # 更新选择项
         current_drop = drops[index + 1]
+        # 进入下一级前，先清空下一级已选 ID，避免沿用旧分支的残留状态。
+        selected_option_ids[index + 1] = None
         variables[index + 1].set(f"分类 {index + 1}")
         current_drop["menu"].delete(0, "end") # 删除当前菜单中的所有选项
 
-        current_options = [current_hier[k]["display_name"] for k in current_hier.keys()]
-        for choice in current_options:
-            current_drop["menu"].add_command(label=choice, command=partial(lambda index, choice: variables[index + 1].set(choice), index, choice)) # 添加当前菜单的选项
+        for option_id, option_data in current_hier.items():
+            choice = option_data["display_name"]
+            # 每个菜单项都绑定唯一 ID，而不是只绑定显示文本。
+            # 这样同名项也会走到不同 ID。
+            current_drop["menu"].add_command(
+                label=choice,
+                command=partial(select_option, index + 1, option_id, choice),
+            ) # 添加当前菜单的选项
 
         current_drop.configure(state="active") # 恢复当前菜单
 
         for i in range(index + 2, len(drops)): # 重置后面的选择项
+            # 当上层选择变化时，后续层级全部失效，必须同步清空 ID 与菜单内容。
+            selected_option_ids[i] = None
             drops[i].configure(state="disabled") # 禁用后面的菜单
             variables[i].set(f"分类 {i}")
             drops[i]["menu"].delete(0, "end")
 
     if end_flag: # 到达目标，显示 URL
-        current_id = next(k for k, v in current_hier.items() if v["display_name"] == variables[index].get())
-        resource_type = current_hier[current_id]["resource_type_code"] or "assets_document"
+        # 到达叶子节点后，优先使用“真实选中 ID”生成 URL。
+        # 这是确保同名教材能生成不同 contentId 链接的关键步骤。
+        current_id = selected_option_ids[index]
+        if not current_id or current_id not in current_hier:
+            # 再次保留兜底，兼容极端情况下 ID 状态缺失。
+            current_id = next(k for k, v in current_hier.items() if v["display_name"] == variables[index].get())
+            selected_option_ids[index] = current_id
+        resource_type = current_hier[current_id].get("resource_type_code") or "assets_document"
         if url_text.get("1.0", tk.END) == "\n": # URL 输入框为空的时候，插入的内容前面不加换行
             url_text.insert("end", f"https://basic.smartedu.cn/tchMaterial/detail?contentType={resource_type}&contentId={current_id}&catalogType=tchMaterial&subCatalog=tchMaterial")
         else:
             url_text.insert("end", f"\nhttps://basic.smartedu.cn/tchMaterial/detail?contentType={resource_type}&contentId={current_id}&catalogType=tchMaterial&subCatalog=tchMaterial")
 
         for i in range(index + 1, len(drops)): # 重置后面的选择项
+            # 已输出 URL 后，后续层级回到初始态，防止用户继续在旧路径上误操作。
+            selected_option_ids[i] = None
             drops[i].configure(state="disabled") # 禁用后面的菜单
             variables[i].set(f"分类 {i}")
             drops[i]["menu"].delete(0, "end")
@@ -920,6 +957,14 @@ for i in range(8):
     drop.bind("<Leave>", lambda e: "break") # 绑定鼠标移出事件，当鼠标移出下拉菜单时，执行 lambda 函数，“break” 表示中止事件传递
     drop.grid(row=i // 4, column=i % 4, padx=int(15 * scale), pady=int(15 * scale)) # 设置位置，2 行 4 列（跟随缩放）
     drops.append(drop)
+
+# 初始化第一级菜单（绑定真实 ID，避免同名冲突）
+drops[0]["menu"].delete(0, "end")
+for option_id, option_data in resource_list.items():
+    option_label = option_data["display_name"]
+    # 覆盖 OptionMenu 默认的“仅文本赋值”行为，改为显式调用 select_option：
+    # 点击顶层菜单时也能同步记录真实 ID，确保从第一层开始就走 ID 链路。
+    drops[0]["menu"].add_command(label=option_label, command=partial(select_option, 0, option_id, option_label))
 
 # 按钮：设置 Token
 token_btn = ttk.Button(container_frame, text="设置 Token", command=show_access_token_window)
